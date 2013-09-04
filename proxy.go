@@ -8,9 +8,13 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"crypto/tls"
 )
 
 var client = http.Client{
+		Transport: &http.Transport {
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return fmt.Errorf("Redirect Disabled") // 禁止自动重定向
 		},
