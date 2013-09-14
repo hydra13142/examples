@@ -8,17 +8,28 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"crypto/tls"
 )
 
-var client = http.Client{
+var  client *http.Client
+
+func init() {
+	proxy, err := url.Parse("http://127.0.0.1:8087")
+	if err != nil {
+		return
+	}
+	client = &http.Client{
 		Transport: &http.Transport {
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig   : &tls.Config{InsecureSkipVerify: true},
+			Proxy			  : http.ProxyURL(proxy),
+			DisableCompression: false,
 		},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return fmt.Errorf("Redirect Disabled") // 禁止自动重定向
 		},
 	}
+}
 
 func proxy(w http.ResponseWriter, r *http.Request) {
 
