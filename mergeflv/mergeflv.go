@@ -21,7 +21,7 @@ func MergeFlv(files []string, file string) {
 			fmt.Println(err)
 			return
 		}
-		err = flvs[i].ReadFrom(r)
+		err = flvs[i].ReadFromFile(r)
 		if err != nil {
 			fmt.Println(err)
 			return
