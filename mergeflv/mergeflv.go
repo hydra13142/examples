@@ -29,7 +29,7 @@ func MergeFlv(files []string, file string) {
 		r.Close()
 	}
 
-	r := amf.New()
+	r := amf.NewAMF()
 	script := flvs[0].Tags[0].Data
 	_, script, _ = r.DecodeAMF0(script)
 	info, script, _ := r.DecodeAMF0(script)
