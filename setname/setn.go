@@ -42,19 +42,24 @@ func main() {
 	}
 	buf := bytes.NewBuffer(nil)
 
-	filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			fmt.Println(err)
+			if err == os.ErrPermission {
+				return nil
+			}
 			return err
 		}
-		if info.IsDir() && (path == "" || path == ".") {
-			return nil
+		if info.IsDir() {
+			if path == "." {
+				return nil
+			}
+			return filepath.SkipDir
 		}
 		ans := reg.FindStringSubmatch(path)
 		if ans == nil {
 			return nil
 		}
-		ans[0] = fmt.Sprintf("%*d", width, begin)
+		ans[0] = fmt.Sprintf("%0*d", width, begin)
 		begin += step
 		err = tgt.Execute(buf, ans)
 		if err != nil {
@@ -68,9 +73,9 @@ func main() {
 		}
 		fmt.Println(buf.String())
 		buf.Reset()
-		if info.IsDir() {
-			return filepath.SkipDir
-		}
 		return nil
 	})
+	if err != nil {
+		fmt.Println(err)
+	}
 }
