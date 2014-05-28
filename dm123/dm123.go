@@ -1,118 +1,224 @@
 package main
 
 import (
+	"code.google.com/p/go.text/encoding/simplifiedchinese"
+	"code.google.com/p/go.text/transform"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
-	"net/url"
+	"net/http/cookiejar"
 	"os"
 	"regexp"
-	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 var (
-	digi, _ = regexp.Compile(`<b>(\d+)</b>/<b>(\d+)</b>`)
-	addr, _ = regexp.Compile(`href="([^"]+)"(?:\starget="_blank")?><img\sborder="0"`)
-	sepr, _ = regexp.Compile(`(.+?)(\d+)(?:_\d+)?\.(\w+)$`)
-	client  *http.Client
+	tran   transform.Transformer
+	fold   *regexp.Regexp
+	page   *regexp.Regexp
+	addr   *regexp.Regexp
+	titl   *regexp.Regexp
+	legal  *strings.Replacer
+	wait   = &sync.WaitGroup{}
+	pool   = make(chan int, 5)
+	client *http.Client
 )
 
 func init() {
-
-	// 创建一个使用GoAgent/Wallproxy的代理
-	proxy, err := url.Parse("http://127.0.0.1:8087")
-	if err != nil {
-		return
-	}
-
-	// 一个使用代理的客户端，默认客户端失败时进行切换
+	fold, _ = regexp.Compile(`<td\salign="center"\s?><a\shref="([^"]+)"\starget="_blank"\s?>([^<>]+)</a>`)
+	addr, _ = regexp.Compile(`src="([^"]+)"\s(?:border="0"\s)?(?:alt=""\s)?/>`)
+	page, _ = regexp.Compile(`<a\shref="([^"]+)">下一页</a>`)
+	titl, _ = regexp.Compile(`<h1>([^<>]+)</h1>`)
+	tran = simplifiedchinese.GBK.NewDecoder()
+	legal = strings.NewReplacer(
+		`/`, `／`,
+		`\`, `＼`,
+		`<`, `＜`,
+		`>`, `＞`,
+		`:`, `：`,
+		`?`, `？`,
+		`*`, `＊`,
+		`"`, `＂`,
+		`|`, `｜`)
+	cookie, _ := cookiejar.New(nil)
 	client = &http.Client{
-		Transport: &http.Transport{
-			Proxy:              http.ProxyURL(proxy),
-			DisableCompression: false,
-		},
+		Jar: cookie,
 	}
 }
 
-func main() {
-
-	// 获取相册的网络地址
-	if len(os.Args) <= 1 {
-		println("usage : url")
-		return
+func repair(relate, current string) (absolute string) {
+	var (
+		a, b, c []string
+		scheme  string
+	)
+	if strings.Contains(relate, "://") {
+		return relate
 	}
-	u := os.Args[1]
-
-	// 创建存放图片的目录
-	s := sepr.FindStringSubmatch(u)
-	if s == nil {
-		println("can't get dir name")
-		return
+	a = strings.Split(current, "://")
+	if len(a) > 1 {
+		scheme = a[0] + "://"
+	} else {
+		scheme = ""
 	}
-	x, y, z := s[1], s[2], s[3]
-	os.Mkdir(y, os.ModeDir)
+	b = strings.Split(a[len(a)-1], "/")
+	if relate[0] == '/' {
+		return scheme + b[0] + relate
+	}
+	if b[len(b)-1] == "" {
+		return current + relate
+	}
+	c = strings.Split(b[len(b)-1], ".")
+	if len(c) == 1 {
+		return current + "/" + relate
+	}
+	b[len(b)-1] = relate
+	return scheme + strings.Join(b, "/")
+}
 
-	// 创建一个读取页面的函数
-	read := func(u string) []byte {
-		r, err := http.Get(u)
+func fname(addr string) string {
+	a := strings.Split(addr, "/")
+	return strings.FieldsFunc(a[len(a)-1], func(r rune) bool {
+		return r == ';' || r == '?' || r == '#'
+	})[0]
+}
+
+func readAll(r io.Reader) ([]byte, error) {
+	r = transform.NewReader(r, tran)
+	return ioutil.ReadAll(r)
+}
+
+func findFold(lnk string) error {
+	resp, err := client.Get(lnk)
+	if err != nil {
+		return err
+	}
+	data, err := readAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return err
+	}
+	matched := fold.FindAllSubmatch(data, -1)
+	for _, each := range matched {
+		lnk, dir := string(each[1]), string(each[2])
+		err := loadFold(lnk, dir)
 		if err != nil {
-			r, err = client.Get(u)
-			if err != nil {
-				println("can't connect url")
-				return nil
+			return err
+		}
+	}
+	return nil
+}
+
+func loadFold(lnk, dir string) error {
+	iter := make(chan string)
+	over := make(chan int)
+	go func() {
+		for i := 1; ; i++ {
+			select {
+			case <-over:
+				close(iter)
+				close(over)
+				return
+			case iter <- fmt.Sprintf("%03d", i):
 			}
 		}
-		defer r.Body.Close()
-		d, err := ioutil.ReadAll(r.Body)
-		if err != nil {
-			println("can't load url")
+	}()
+	dir = legal.Replace(dir)
+	os.Mkdir(dir, os.ModeDir)
+	for {
+		err := func() error {
+			fmt.Println(lnk)
+			resp, err := client.Get(lnk)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			data, err := readAll(resp.Body)
+			if err != nil {
+				return err
+			}
+
+			matched := addr.FindSubmatch(data)
+			if len(matched) >= 1 {
+				wait.Add(1)
+				go func(lnk, dir, name string) (err error) {
+					pool <- 1
+					for i := 0; i <= 9; i++ {
+						err = loadPicture(lnk, dir, name)
+						if err == nil {
+							break
+						}
+					}
+					fmt.Println(lnk)
+					if err != nil {
+						fmt.Println(err)
+					}
+					time.Sleep(time.Second * 10)
+					<-pool
+					wait.Done()
+					return nil
+				}(repair(strings.Join(strings.Split(string(matched[1]), "small"), ""), lnk), dir, <-iter)
+			}
+			matched = page.FindSubmatch(data)
+			if len(matched) < 1 {
+				return fmt.Errorf("Can't find next page")
+			}
+			lnk = string(matched[1])
 			return nil
+		}()
+		if err != nil {
+			break
 		}
-		return d
+		time.Sleep(time.Second * 2)
 	}
+	wait.Wait()
+	over <- 0
+	return nil
+}
 
-	// 下载第一个页面，获取当前图片和总图片数
-	d := read(u)
-	if d == nil {
-		println("can't load index page")
-		return
+func loadPicture(lnk, dir, name string) (err error) {
+	var (
+		end  = make(chan int)
+		data []byte
+	)
+	resp, err := client.Get(lnk)
+	if err != nil {
+		return err
 	}
-	b := digi.FindSubmatch(d)
-	if b == nil {
-		println("can't get page number")
-		return
+	defer resp.Body.Close()
+	go func() {
+		data, err = ioutil.ReadAll(resp.Body)
+		end <- 1
+	}()
+	select {
+	case <-time.After(time.Minute):
+		return fmt.Errorf("Time out while downloading")
+	case <-end:
 	}
-	i, _ := strconv.Atoi(string(b[1]))
-	j, _ := strconv.Atoi(string(b[2]))
-	println("[", i, "/", j, "]")
+	if err != nil {
+		return err
+	}
+	file, err := os.Create(dir + "/" + name + ".jpg")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = file.Write(data)
+	return err
+}
 
-	// 依次下载每个图片
-	for i <= j {
-
-		// 获取图片的地址
-		d = read(u)
-		b = addr.FindSubmatch(d)
-		if b == nil {
-			println("can't find image addr")
-			return
+func main() {
+	/*
+		var err error
+		err = loadFold(`http://www.dm123.cn/pic/cg/2010-12-08/30470.html`, `総天然色妖怪美少女絵巻`)
+		if err != nil {
+			fmt.Println(err)
 		}
-		a := `http://www.dm123.cn` + string(b[1])
-
-		// 保存图片
-		println("BEGIN " + u)
-		d = read(a)
-		if d == nil {
-			println("can't load image page")
-			return
+		err = findFold(`http://www.dm123.cn/ecms/pic/cg/index.html`)
+		if err != nil {
+			fmt.Println(err)
 		}
-		ioutil.WriteFile(fmt.Sprintf("%s/%03d.jpg", y, i), d, 0)
-		println("OVER  " + u)
-
-		// 生成下一页的地址
-		i++
-		u = x + y + "_" + strconv.Itoa(i) + "." + z
-	}
-
-	// 下载结束
-	println("END")
+	*/
 }
