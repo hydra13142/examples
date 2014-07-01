@@ -31,7 +31,7 @@ func init() {
 	}
 }
 
-func proxy(w http.ResponseWriter, r *http.Request) {
+func proxy(w http.ResponseWriter, req *http.Request) {
 	defer r.Body.Close()
 	req.RequestURI = "" // 发送的Request这俩字段必须是空字符串
 	req.RemoteAddr = ""
