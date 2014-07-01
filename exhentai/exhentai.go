@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/hydra13142/http/glype"
+	"io"
 	"io/ioutil"
 	"net/url"
 	"os"
@@ -60,7 +61,7 @@ func getList(f string) []string {
 		return nil
 	}
 	defer file.Close()
-	data, err := ioutil.ReadAll(file)
+	data, err := getData(file)
 	if err != nil {
 		return nil
 	}
@@ -78,7 +79,7 @@ func getHistory(f string) error {
 		return err
 	}
 	defer file.Close()
-	data, err := ioutil.ReadAll(file)
+	data, err := getData(file)
 	if err != nil {
 		return err
 	}
@@ -144,6 +145,20 @@ func getSize(s string) float64 {
 	}
 }
 
+func getData(r io.Reader) (data []byte, err error) {
+	sign := make(chan int)
+	go func() {
+		data, err = ioutil.ReadAll(r)
+		sign <- 0
+	}()
+	select {
+	case <-sign:
+	case <-time.After(time.Minute):
+		return nil, fmt.Errorf("Time out break")
+	}
+	return data, err
+}
+
 func Login(client *glype.Client) error {
 	user := url.Values{
 		"ipb_login_username": {"snake117"},
@@ -155,7 +170,7 @@ func Login(client *glype.Client) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, err = ioutil.ReadAll(resp.Body)
+	_, err = getData(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -164,7 +179,7 @@ func Login(client *glype.Client) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, err = ioutil.ReadAll(resp.Body)
+	_, err = getData(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -173,7 +188,7 @@ func Login(client *glype.Client) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, err = ioutil.ReadAll(resp.Body)
+	_, err = getData(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -182,7 +197,7 @@ func Login(client *glype.Client) error {
 		return err
 	}
 	defer resp.Body.Close()
-	_, err = ioutil.ReadAll(resp.Body)
+	_, err = getData(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -192,7 +207,7 @@ func Login(client *glype.Client) error {
 		return err
 	}
 	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := getData(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -219,7 +234,7 @@ func Hentai(web, pxy, adr string) error {
 				return err
 			}
 			defer resp.Body.Close()
-			_, err = ioutil.ReadAll(resp.Body)
+			_, err = getData(resp.Body)
 			if err != nil {
 				return err
 			}
@@ -235,7 +250,7 @@ func Hentai(web, pxy, adr string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	data, err := ioutil.ReadAll(resp.Body)
+	data, err := getData(resp.Body)
 	if err != nil {
 		return err
 	}
@@ -269,7 +284,7 @@ func Hentai(web, pxy, adr string) error {
 				return "", err
 			}
 			defer resp.Body.Close()
-			data, err = ioutil.ReadAll(resp.Body)
+			data, err = getData(resp.Body)
 			if err != nil {
 				return "", err
 			}
@@ -306,7 +321,7 @@ func Hentai(web, pxy, adr string) error {
 			if strings.Split(resp.Header.Get("Content-Type"), "/")[0] != "image" {
 				return "", fmt.Errorf("404 File Not Found")
 			}
-			data, err = ioutil.ReadAll(resp.Body)
+			data, err = getData(resp.Body)
 			if err != nil {
 				return "", err
 			}

@@ -32,34 +32,39 @@ func init() {
 }
 
 func proxy(w http.ResponseWriter, r *http.Request) {
-
 	defer r.Body.Close()
-	r.RequestURI = "" // 发送的Request这个字段必须是空字符串
+	req.RequestURI = "" // 发送的Request这俩字段必须是空字符串
+	req.RemoteAddr = ""
+	req.Header.Del("Proxy-Connection")
 
-	m, err := client.Do(r)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		http.NotFound(w, r) // 简单粗暴的把错误全部改成404
+		http.Error(w, err.Error(), 410) // 简单粗暴的把错误全部改成404
 		return
 	}
-	defer m.Body.Close()
+	defer resp.Body.Close()
 
-	for i, j := range m.Header {
-		for _, k := range j {
-			w.Header().Add(i, k)
+	h := w.Header()
+	for k, v := range resp.Header {
+		for _, m := range v {
+			h.Add(k, m)
 		}
 	}
-	w.WriteHeader(m.StatusCode) // 传递响应头
+	h.Del("Connection")
+	w.WriteHeader(resp.StatusCode) // 传递响应头
 
 	data := make([]byte, 4096)
+	s, l := int64(0), resp.ContentLength
+	if l <= 0 {
+		l = (1 << 63) - 1
+	}
 	for {
-		n, err := m.Body.Read(data)
-		if err != nil {
-			if err == io.EOF {
-				w.Write(data[:n]) // 发送结束
-			}
-			break
+		n, er1 := resp.Body.Read(data)
+		s += int64(n)
+		_, er2 := w.Write(data[:n]) // 成功的Read读取字节数也有可能达不到长度
+		if er1 != nil || er2 != nil || s >= l {
+			break // 放在最后判断，在读、写错误或者完成时跳出
 		}
-		w.Write(data[:n]) // 成功的Read读取字节数也有可能达不到长度
 	}
 }
 
