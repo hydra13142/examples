@@ -126,7 +126,11 @@ func loadFold(lnk, dir string) error {
 		}
 	}()
 	dir = legal.Replace(dir)
-	os.Mkdir(dir, os.ModeDir)
+	err := os.Mkdir(dir, os.ModeDir)
+	for err != nil {
+		dir += "="
+		err = os.Mkdir(dir, os.ModeDir)
+	}
 	for {
 		err := func() error {
 			fmt.Println(lnk)
@@ -216,9 +220,10 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		err = findFold(`http://www.dm123.cn/ecms/pic/cg/index.html`)
-		if err != nil {
-			fmt.Println(err)
-		}
 	*/
+	err := findFold(`http://www.dm123.cn/ecms/pic/cg/index.html`)
+	if err != nil {
+		fmt.Println(err)
+	}
+
 }

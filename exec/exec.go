@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -27,7 +28,7 @@ func main() {
 		return
 	}
 	attr := part[each-1]
-	obey := strings.Join(part[:each-1], ".") + ".exe"
+	obey := strings.Join(part[:each-1], ".") + `.exe`
 	if mks {
 		switch attr {
 		case "c":
@@ -70,6 +71,7 @@ func main() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	cmd.Dir = filepath.Dir(flag.Arg(0))
 	cmd.Run()
 	if !mks {
 		if attr == "c" || attr == "cpp" {
