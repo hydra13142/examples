@@ -37,6 +37,7 @@ func main() {
 			cmd = exec.Command("g++", "-O3", "-o", obey, flag.Arg(0))
 		case "go":
 			cmd = exec.Command("gofmt", "-w", flag.Arg(0))
+			cmd.Dir = filepath.Dir(flag.Arg(0))
 			cmd.Run()
 			cmd = exec.Command("go", "build", flag.Arg(0))
 		default:
@@ -51,6 +52,7 @@ func main() {
 			cmd = exec.Command("g++", "-W", "-Wall", "-o", obey, flag.Arg(0))
 		case "go":
 			cmd = exec.Command("gofmt", "-w", flag.Arg(0))
+			cmd.Dir = filepath.Dir(flag.Arg(0))
 			cmd.Run()
 			cmd = exec.Command("go", "run", flag.Arg(0))
 		case "lsp":
@@ -62,16 +64,17 @@ func main() {
 			return
 		}
 		if attr == "c" || attr == "cpp" {
+			cmd.Dir = filepath.Dir(flag.Arg(0))
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			cmd.Run()
 			cmd = exec.Command(obey)
 		}
 	}
+	cmd.Dir = filepath.Dir(flag.Arg(0))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
-	cmd.Dir = filepath.Dir(flag.Arg(0))
 	cmd.Run()
 	if !mks {
 		if attr == "c" || attr == "cpp" {
