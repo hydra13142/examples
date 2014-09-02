@@ -6,6 +6,7 @@ import (
 	amf "github.com/hydra13142/amf/ruled"
 	"github.com/hydra13142/flv"
 	"os"
+	"strings"
 )
 
 func MergeFlv(files []string, file string) {
@@ -18,8 +19,11 @@ func MergeFlv(files []string, file string) {
 	for i, name := range files {
 		r, err := os.Open(name)
 		if err != nil {
-			fmt.Println(err)
-			return
+			r, err = os.Open(name + ".flv")
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
 		}
 		err = flvs[i].ReadFromFile(r)
 		if err != nil {
@@ -150,10 +154,12 @@ func main() {
 	if l := len(os.Args); l <= 1 {
 		fmt.Println("usage : executable [src...] dest")
 		return
-	} else if l == 2 {
-		MergeFlv(os.Args[1:], os.Args[1])
-	} else {
-		l--
-		MergeFlv(os.Args[1:l], os.Args[l])
 	}
+	name := os.Args[1]
+	if i := strings.LastIndex(name, "."); i < 0 {
+		name = name + "-merged.flv"
+	} else {
+		name = name[:i] + "-merged.flv"
+	}
+	MergeFlv(os.Args[1:], name)
 }
