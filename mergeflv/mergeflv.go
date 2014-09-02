@@ -156,10 +156,9 @@ func main() {
 		return
 	}
 	name := os.Args[1]
-	if i := strings.LastIndex(name, "."); i < 0 {
-		name = name + "-merged.flv"
-	} else {
-		name = name[:i] + "-merged.flv"
+	if i := strings.LastIndex(name, "."); i > 0 {
+		name = name[:i]
 	}
+	name = name += "-merged.flv"
 	MergeFlv(os.Args[1:], name)
 }
