@@ -93,7 +93,7 @@ func open(name string) ([]Danmu, error) {
 	return ans, nil
 }
 
-// 将弹幕排布并写入w，采用的简单的固定移速、最小重叠排布算法
+// 将弹幕排布并写入w，采用的简单的固定存在时间、最小重叠时间的排布算法
 func save(w io.Writer, dans []Danmu) {
 	// 将屏幕划分10像素为1行，对应3种字体（行宽20，30，40）
 	// 其值表示上一个字幕在该时间点结束
