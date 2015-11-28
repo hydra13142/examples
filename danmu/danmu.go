@@ -7,10 +7,12 @@
 package main
 
 import (
+	"compress/flate"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
@@ -25,7 +27,19 @@ const header = "[Script Info]\r\nScriptType: v4.00+\r\nCollisions: Normal\r\npla
 	"\r\n[Events]\r\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n"
 
 // 正则匹配获取弹幕原始信息
-var line = regexp.MustCompile(`<d\sp="([\d\.]+),([145]),(\d+),(\d+),\d+,\d+,\w+,\d+">([^<>]+?)</d>`)
+var (
+	biliz = regexp.MustCompile(`^http://www.bilibili.com/video/av\d+/?$`)
+	title = regexp.MustCompile(`<title>(.+?)_[^_]+_[^_]+_bilibili_哔哩哔哩弹幕视频网</title>`)
+	addrs = regexp.MustCompile(`cid=(\d+)&`)
+	bili  = regexp.MustCompile(`<d\sp="([\d\.]+),([145]),(\d+),(\d+),\d+,\d+,\w+,\d+">([^<>]+?)</d>`)
+	acfn  = regexp.MustCompile(`\{"c"\:"([\d\.]+),(\d+),([145]),(\d+),[\w,-]+","m"\:"([^"]+)"\}`)
+)
+
+// 错误信息
+var (
+	errNoXML   = fmt.Errorf("Didn't find the xml address")
+	errNoTitle = fmt.Errorf("Didn't find the title")
+)
 
 // 用来保管弹幕的信息
 type Danmu struct {
@@ -49,16 +63,6 @@ func (d Danmus) Swap(i, j int) {
 	d[i], d[j] = d[j], d[i]
 }
 
-// 将正则匹配到的数据填写入Danmu类型里
-func fill(d *Danmu, s [][]byte) {
-	d.time, _ = strconv.ParseFloat(string(s[1]), 64)
-	d.kind = s[2][0] - '0'
-	d.size, _ = strconv.Atoi(string(s[3]))
-	bgr, _ := strconv.Atoi(string(s[4]))
-	d.color = ((bgr >> 16) & 255) | (bgr & (255 << 8)) | ((bgr & 255) << 16)
-	d.text = string(s[5])
-}
-
 // 返回文本的长度，假设ascii字符都是0.5个字长，其余都是1个字长
 func length(s string) float64 {
 	l := 0.0
@@ -80,17 +84,32 @@ func timespot(f float64) string {
 }
 
 // 读取文件并获取其中的弹幕
-func open(name string) ([]Danmu, error) {
-	data, err := ioutil.ReadFile(name)
+func open(r io.Reader) ([]Danmu, error) {
+	data, err := ioutil.ReadAll(r)
 	if err != nil {
 		return nil, err
 	}
-	dan := line.FindAllSubmatch(data, -1)
-	ans := make([]Danmu, len(dan))
-	for i := len(dan) - 1; i >= 0; i-- {
-		fill(&ans[i], dan[i])
+	bi := bili.FindAllSubmatch(data, -1)
+	ac := acfn.FindAllSubmatch(data, -1)
+	dm := make([]Danmu, len(bi)+len(ac))
+	da := dm[len(bi):]
+	for i, s := range bi {
+		dm[i].time, _ = strconv.ParseFloat(string(s[1]), 64)
+		dm[i].kind = s[2][0] - '0'
+		dm[i].size, _ = strconv.Atoi(string(s[3]))
+		bgr, _ := strconv.Atoi(string(s[4]))
+		dm[i].color = ((bgr >> 16) & 255) | (bgr & (255 << 8)) | ((bgr & 255) << 16)
+		dm[i].text = string(s[5])
 	}
-	return ans, nil
+	for i, s := range ac {
+		da[i].time, _ = strconv.ParseFloat(string(s[1]), 64)
+		da[i].kind = s[3][0] - '0'
+		da[i].size, _ = strconv.Atoi(string(s[4]))
+		bgr, _ := strconv.Atoi(string(s[2]))
+		da[i].color = ((bgr >> 16) & 255) | (bgr & (255 << 8)) | ((bgr & 255) << 16)
+		da[i].text = string(s[5])
+	}
+	return dm, nil
 }
 
 // 将弹幕排布并写入w，采用的简单的固定存在时间、最小重叠时间的排布算法
@@ -100,7 +119,6 @@ func save(w io.Writer, dans []Danmu) {
 	p1 := make([]float64, 36)
 	p2 := make([]float64, 36)
 	p3 := make([]float64, 36)
-	t := 0
 	// 选取连续行中时间最后的
 	max := func(x []float64) float64 {
 		i := x[0]
@@ -153,9 +171,9 @@ func save(w io.Writer, dans []Danmu) {
 		}
 		switch dan.kind {
 		case 1: // 右往左
-			t := find(p1, dan.time, t, dan.size)
-			set(p1[t:t+dan.size], dan.time+8)
-			h := (t+dan.size)*10 - 1
+			j := find(p1, dan.time, 0, dan.size)
+			set(p1[j:j+dan.size], dan.time+8)
+			h := (j+dan.size)*10 - 1
 			s += fmt.Sprintf("\\move(%d,%d,%d,%d)", 640+int(l/2), h, -int(l/2), h)
 			fmt.Fprintf(w, "Dialogue: 1,%s,%s,Default,,0000,0000,0000,,{%s}%s\r\n",
 				timespot(dan.time+0),
@@ -178,31 +196,107 @@ func save(w io.Writer, dans []Danmu) {
 	}
 }
 
+// 生成弹幕文件
+func translate(r io.ReadCloser, name string) error {
+	defer r.Close()
+	// 获取xml数据
+	dans, err := open(r)
+	if err != nil {
+		return err
+	}
+	// 创建字幕文件
+	file, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	// 对弹幕进行排序
+	sort.Sort(Danmus(dans))
+	// utf-8 bom头
+	file.Write([]byte{0xEF, 0xBB, 0xBF})
+	// ass文件头
+	file.WriteString(header)
+	// 写入弹幕信息
+	save(file, dans)
+	return nil
+}
+
+// 识别输入（文件名/网址）并提供弹幕数据
+func identify(par string) (r io.ReadCloser, name string, err error) {
+	if biliz.MatchString(par) {
+		err := func() error {
+			resp, err := http.Get(par)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			data, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return err
+			}
+			matched := addrs.FindSubmatch(data)
+			if len(matched) == 0 {
+				return errNoXML
+			}
+			par = string(matched[1]) + `.xml`
+			matched = title.FindSubmatch(data)
+			if len(matched) == 0 {
+				return errNoTitle
+			}
+			name = string(matched[1]) + `.ass`
+			resp, err = http.Get(`http://comment.bilibili.com/` + par)
+			if err != nil {
+				return err
+			}
+			defer resp.Body.Close()
+			if resp.Header.Get("Content-Encoding") == "deflate" {
+				resp.Body = flate.NewReader(resp.Body)
+				defer resp.Body.Close()
+			}
+			file, err := os.Create(par)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			xml, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return err
+			}
+			file.Write(xml)
+			return nil
+		}()
+		if err != nil {
+			return nil, "", err
+		}
+	} else {
+		if n := strings.LastIndex(par, "."); n < 0 {
+			name = par + ".ass"
+		} else {
+			name = par[:n] + ".ass"
+		}
+	}
+	file, err := os.Open(par)
+	if err != nil {
+		return nil, "", err
+	}
+	return file, name, nil
+}
+
 // 主函数，实现了命令行
 func main() {
 	if len(os.Args) <= 1 {
 		os.Exit(0)
 	}
 	for _, name := range os.Args[1:] {
-		dans, err := open(name)
+		r, name, err := identify(name)
 		if err != nil {
+			fmt.Println(err)
 			os.Exit(1)
 		}
-		if n := strings.LastIndex(name, "."); n != -1 {
-			name = name[:n]
-		}
-		name += ".ass"
-		file, err := os.Create(name)
+		err = translate(r, name)
 		if err != nil {
+			fmt.Println(err)
 			os.Exit(2)
 		}
-		// 对弹幕进行排序
-		sort.Sort(Danmus(dans))
-		// utf-8 bom头
-		file.Write([]byte{0xEF, 0xBB, 0xBF})
-		// ass文件头
-		file.WriteString(header)
-		save(file, dans)
-		file.Close()
 	}
 }

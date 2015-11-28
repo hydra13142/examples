@@ -17,9 +17,9 @@ import (
 )
 
 var (
-	pool            = &sync.Pool{}
-	regex           []*regexp.Regexp
-	proxy           []*url.URL
+	pool  = &sync.Pool{}
+	regex []*regexp.Regexp
+	proxy []*url.URL
 )
 
 var disableRedirect = fmt.Errorf("Disable Redirect")
@@ -214,43 +214,53 @@ func serveHTTP(conn *net.TCPConn, reader *bufio.Reader, codeline, headers string
 	resp.Header.Del("Connection")
 	content := resp.Header.Get("Content-Type")
 	piece := strings.Split(req.URL.Path, "/")
-	name := piece[len(piece)-1]
-	if l := len(name); l >= 5 {
-		if name[l-4:l] == ".hlv" || name[l-4:l] == ".flv" || name[l-4:l] == ".mp4" {
-			goto save
+
+	name, attr := func() (string, string) {
+		name := piece[len(piece)-1]
+		l := len(name)
+		if l >= 5 {
+			if name[l-4:l] == ".hlv" || name[l-4:l] == ".flv" || name[l-4:l] == ".mp4" {
+				return name[:l-4], name[l-4:]
+			}
+			if l >= 6 && name[l-5:l] == ".letv" {
+				return name[:l-5], ".flv"
+			}
 		}
-		if l >= 6 && name[l-5:l] == ".letv" {
-			goto save
+		if len(content) < 5 || (content[:5] != "video" && content[:3] != "flv") {
+			return "", ""
 		}
-	}
-	if len(content) < 5 || (content[:5] != "video" && content[:3] != "flv") {
+		if name == "smile" {
+			req.ParseForm()
+			name = "sm" + strings.Split(req.FormValue("m"), ".")[0]
+		}
+		if strings.Contains(content, "mp4") {
+			return name, ".mp4"
+		}
+		if strings.Contains(content, "flv") {
+			return name, ".flv"
+		}
+		return "", ""
+	}()
+	if name == "" && attr == "" {
 		if err = resp.Write(conn); err != nil {
 			// log.Println("WriteResponse:", err)
 		}
 		return
 	}
-	if name == "smile" {
-		req.ParseForm()
-		name = "sm" + strings.Split(req.FormValue("m"), ".")[0]
-	}
-	if strings.Contains(content, "mp4") {
-		if !strings.HasSuffix(name, ".mp4") {
-			name += ".mp4"
-		}
-	}
-	if strings.Contains(content, "flv") {
-		if !strings.HasSuffix(name, ".flv") {
-			name += ".flv"
-		}
-	}
-save:
 	log.Printf("LOAD %s\n", name)
 	b := new(bytes.Buffer)
 	if err = resp.Write(io.MultiWriter(b, conn)); err != nil {
 		// log.Println("WriteResponse:", err)
 		return
 	}
-	file, _ := os.OpenFile(name, os.O_APPEND|os.O_CREATE, 0x0666)
+	for i := 0; ; i++ {
+		s := fmt.Sprintf("%s[%02d]%s", name, i, attr)
+		if _, e := os.Stat(s); os.IsNotExist(e) {
+			name = s
+			break
+		}
+	}
+	file, _ := os.Create(name)
 	file.Write(bytes.SplitN(b.Bytes(), []byte("\r\n\r\n"), 2)[1])
 	file.Close()
 	log.Printf("OVER %s\n", name)
