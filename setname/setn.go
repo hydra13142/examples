@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"text/template"
 )
 
 var (
@@ -18,61 +16,54 @@ var (
 )
 
 func init() {
-	flag.IntVar(&begin, "b", 0, "iterator to begin")
+	flag.IntVar(&begin, "b", 1, "iterator to begin")
 	flag.IntVar(&step, "s", 1, "add each time to iterator")
-	flag.IntVar(&width, "w", 1, "width translate iterator to string")
+	flag.IntVar(&width, "w", 3, "width trmatchedlate iterator to string")
 	flag.Parse()
 }
 
 func main() {
 	if flag.NArg() < 2 {
-		fmt.Println("usage: executable match-pattern name-pattern")
+		fmt.Println(`usage: executable match-pattern name-pattern`)
+		fmt.Println(`note: use '\$' as '$', '$0' is the iterator:`)
+		flag.PrintDefaults()
 		return
 	}
-
 	reg, err := regexp.Compile(flag.Arg(0))
 	if err != nil {
 		fmt.Println("syntax error in match-pattern")
 		return
 	}
-	tgt, err := template.New("only").Parse(strings.Join(flag.Args()[1:], " "))
-	if err != nil {
-		fmt.Println("syntax error in name-pattern")
-		return
-	}
-	buf := bytes.NewBuffer(nil)
-
+	temp := strings.Join(flag.Args()[1:], " ")
 	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			if err == os.ErrPermission {
-				return nil
-			}
-			return err
-		}
-		if info.IsDir() {
-			if path == "." {
-				return nil
-			}
-			return filepath.SkipDir
-		}
-		ans := reg.FindStringSubmatch(path)
-		if ans == nil {
+		if path == "." {
 			return nil
 		}
-		ans[0] = fmt.Sprintf("%0*d", width, begin)
+		if err == os.ErrPermission {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		matched := reg.FindStringSubmatchIndex(path)
+		if matched == nil {
+			return nil
+		}
+		media := fmt.Sprintf("%0*d", width, begin) + path
 		begin += step
-		err = tgt.Execute(buf, ans)
+		matched[0], matched[1] = 0, width
+		for i := 2; i < len(matched); i++ {
+			matched[i] += width
+		}
+		result := string(reg.ExpandString(nil, temp, media, matched))
+		fmt.Println(path, "=>\n\t", result)
+		err = os.Rename(path, result)
 		if err != nil {
-			fmt.Println(err)
 			return err
 		}
-		err = os.Rename(path, buf.String())
-		if err != nil {
-			fmt.Println(err)
-			return err
+		if info.IsDir() && path != "." {
+			return filepath.SkipDir
 		}
-		fmt.Println(buf.String())
-		buf.Reset()
 		return nil
 	})
 	if err != nil {
