@@ -49,7 +49,7 @@ func main() {
 		case "c":
 			cmd = exec.Command("gcc", "-W", "-Wall", "-o", obey, flag.Arg(0))
 		case "cpp":
-			cmd = exec.Command("g++", "-W", "-Wall", "-o", obey, flag.Arg(0))
+			cmd = exec.Command("g++", "-std=c++11", "-W", "-Wall", "-o", obey, flag.Arg(0))
 		case "go":
 			cmd = exec.Command("gofmt", "-w", flag.Arg(0))
 			cmd.Dir = filepath.Dir(flag.Arg(0))
